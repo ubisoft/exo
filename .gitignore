@@ -23,7 +23,7 @@ digest.txt
 **/.DS_Store
 app/EXO/build/
 dist/
-
+.claude
 
 # rust
 target/

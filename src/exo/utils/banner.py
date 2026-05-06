@@ -27,4 +27,9 @@ def print_startup_banner(port: int) -> None:
 
 """
 
-    print(banner)
+    try:
+        print(banner)
+    except UnicodeEncodeError:
+        import sys
+        sys.stdout.buffer.write(banner.encode("utf-8", errors="replace"))
+        sys.stdout.buffer.flush()

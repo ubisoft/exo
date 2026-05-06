@@ -111,7 +111,7 @@ def main(
                             )
                         )
                         if is_primary:
-                            _wait_for_server(instance.http_port)
+                            _wait_for_server(instance.http_port, server_process)
                         current_status = RunnerReady()
                     case ChatCompletion(
                         task_params=task_params, command_id=command_id
@@ -290,9 +290,17 @@ def _resolve_rpc_server_path() -> str:
 
 
 def _format_args(template: str, values: dict[str, str]) -> list[str]:
-    filled = template.format(**values)
+    # Quote values that contain spaces so shlex.split keeps them as single tokens.
+    # This matters on Windows where model/binary paths commonly contain spaces.
+    quoted = {
+        k: (f'"{v}"' if " " in v and not (v.startswith('"') and v.endswith('"')) else v)
+        for k, v in values.items()
+    }
+    filled = template.format(**quoted)
     parts = shlex.split(filled, posix=False)
-    return [part for part in parts if part]
+    # shlex with posix=False preserves the surrounding quotes; strip them so
+    # subprocess.Popen receives clean tokens.
+    return [part.strip('"') for part in parts if part]
 
 
 def _resolve_gguf_model_path(model_id: ModelId) -> Path | None:
@@ -302,7 +310,7 @@ def _resolve_gguf_model_path(model_id: ModelId) -> Path | None:
     return None
 
 
-def _wait_for_server(http_port: int) -> None:
+def _wait_for_server(http_port: int, process: subprocess.Popen[str]) -> None:
     url = f"http://127.0.0.1:{http_port}/v1/models"
     raw_timeout = os.getenv("EXO_LLAMA_SERVER_STARTUP_TIMEOUT_SECONDS")
     try:
@@ -311,6 +319,10 @@ def _wait_for_server(http_port: int) -> None:
         timeout_seconds = 0
     deadline = time.time() + timeout_seconds if timeout_seconds > 0 else None
     while deadline is None or time.time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"llama.cpp server exited with code {process.returncode} before becoming ready"
+            )
         try:
             with httpx.Client(timeout=2.0) as client:
                 resp = client.get(url)
@@ -318,6 +330,9 @@ def _wait_for_server(http_port: int) -> None:
                     return
         except Exception:
             time.sleep(0.5)
+    raise RuntimeError(
+        f"llama.cpp server did not become ready within {timeout_seconds}s"
+    )
 
 
 def _stream_chat_completion(
@@ -376,6 +391,7 @@ def _stream_chat_completion(
                                 model=model_id,
                                 text=text,
                                 token_id=-1,
+                                usage=None,
                                 finish_reason=None,
                             ),
                         )
@@ -393,6 +409,7 @@ def _stream_chat_completion(
                                 model=model_id,
                                 text="",
                                 token_id=-1,
+                                usage=None,
                                 finish_reason=mapped_reason,
                             ),
                         )

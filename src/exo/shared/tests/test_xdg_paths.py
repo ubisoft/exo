@@ -120,7 +120,7 @@ def test_windows_uses_appdata_paths():
 
 def test_absolute_exo_home_overrides():
     """Test that an absolute EXO_HOME is used directly."""
-    abs_home = "/var/tmp/exo-abs"
+    abs_home = str(Path.home() / "exo-abs-test")
     with mock.patch.dict(os.environ, {"EXO_HOME": abs_home}, clear=False):
         import importlib
 
@@ -155,7 +155,7 @@ def test_models_in_data_dir():
 
 def test_absolute_models_dir_overrides():
     """Test that EXO_MODELS_DIR uses an absolute path when provided."""
-    abs_models_dir = "/var/tmp/exo-models"
+    abs_models_dir = str(Path.home() / "exo-models-test")
     with mock.patch.dict(os.environ, {"EXO_MODELS_DIR": abs_models_dir}, clear=False):
         import importlib
 

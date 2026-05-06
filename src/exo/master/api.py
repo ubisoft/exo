@@ -387,8 +387,13 @@ class API:
 
         cards = [card for card in MODEL_CARDS.values() if card.model_id == model_id]
         if not cards:
-            if model_id in get_env_gguf_model_ids():
-                cards = [await resolve_model_card(model_id)]
+            if model_id in get_env_gguf_model_ids() or str(model_id).lower().endswith(".gguf"):
+                try:
+                    cards = [await resolve_model_card(model_id)]
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=404, detail=f"Model {model_id} not found: {exc}"
+                    ) from exc
             else:
                 raise HTTPException(
                     status_code=404, detail=f"Model {model_id} not found"
@@ -1282,7 +1287,7 @@ class API:
                 continue
             seen.add(card.model_id)
             model_id_value = str(card.model_id)
-            is_local = Path(model_id_value).is_absolute()
+            is_local = Path(model_id_value).is_absolute() or model_id_value.lower().endswith(".gguf")
             tags = ["local"] if is_local else []
             data.append(
                 ModelListModel(

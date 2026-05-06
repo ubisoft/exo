@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 from pathlib import Path as FsPath
 import struct
 import os
@@ -10,7 +10,7 @@ import tomlkit
 from anyio import Path, open_file
 from huggingface_hub import model_info
 from loguru import logger
-from pydantic import BaseModel, Field, PositiveInt, field_validator
+from pydantic import AliasChoices, BaseModel, Field, PositiveInt, field_validator, model_validator
 from enum import Enum
 
 from exo.shared.constants import EXO_ENABLE_IMAGE_MODELS
@@ -206,6 +206,25 @@ async def resolve_model_card_for_download(model_id: ModelId) -> "ModelCard":
     return await resolve_model_card(model_id)
 
 
+def _reconstruct_gguf_model_id(gguf_path: FsPath, models_dir: FsPath) -> ModelId:
+    """Reconstruct the original owner/repo/file.gguf model ID from a path inside EXO_MODELS_DIR.
+
+    Reverses ModelId.normalize() (which replaces '/' with '--') on the first
+    path component so the returned ID matches what the user originally requested.
+    Files outside EXO_MODELS_DIR are returned as absolute paths.
+    """
+    try:
+        rel = gguf_path.relative_to(models_dir)
+        parts = rel.parts
+        if len(parts) >= 2:
+            repo_dir = parts[0].replace("--", "/")
+            rest = "/".join(parts[1:])
+            return ModelId(f"{repo_dir}/{rest}")
+    except ValueError:
+        pass
+    return ModelId(str(gguf_path))
+
+
 async def get_local_gguf_model_cards() -> list["ModelCard"]:
     from exo.shared.constants import EXO_MODELS_DIR
 
@@ -216,7 +235,7 @@ async def get_local_gguf_model_cards() -> list["ModelCard"]:
     for gguf_path in EXO_MODELS_DIR.rglob("*.gguf"):
         if not gguf_path.is_file():
             continue
-        model_id = ModelId(str(gguf_path))
+        model_id = _reconstruct_gguf_model_id(gguf_path, EXO_MODELS_DIR)
         try:
             cards.append(await ModelCard.from_gguf(model_id, gguf_path))
         except Exception as exc:
