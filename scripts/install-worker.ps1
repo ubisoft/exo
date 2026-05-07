@@ -45,7 +45,7 @@ $LlamaZip     = "llama-$LlamaBuild-bin-win-cuda-$CudaVersion-x64.zip"
 # Also need the cudart runtime package alongside the main zip
 $CudartZip    = "cudart-llama-bin-win-cuda-$CudaVersion-x64.zip"
 $LlamaUrl     = "https://github.com/ggerganov/llama.cpp/releases/download/$LlamaBuild/$LlamaZip"
-$RepoUrl      = "git@github.com:ubisoft/exo.git"
+$RepoUrl      = "https://github.com/ubisoft/exo.git"
 $Branch       = "supportWindows"
 $LibP2PPort   = 4001
 $ApiPort      = 52415
@@ -66,8 +66,16 @@ function Assert-Command([string]$cmd, [string]$install) {
 
 Write-Step "Checking prerequisites"
 
-Assert-Command "git" "Install Git from https://git-scm.com"
-Assert-Command "uv"  "Install uv: irm https://astral.sh/uv/install.ps1 | iex"
+Assert-Command "git" "Install Git: winget install Git.Git"
+
+if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
+    Write-Host "  uv not found - installing via winget..."
+    winget install --id astral-sh.uv -e --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] uv install failed" -ForegroundColor Red; exit 1 }
+    # Reload PATH so uv is available in this session
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    Assert-Command "uv" "Restart PowerShell and re-run this script."
+}
 
 $pyVer = uv python find 2>&1
 Write-Host "  Python : $pyVer"
