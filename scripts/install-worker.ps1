@@ -83,8 +83,14 @@ Write-Host "  uv     : $(uv --version)"
 Write-Host "  git    : $(git --version)"
 
 if (-not (Get-Command "npm" -ErrorAction SilentlyContinue) -and -not $SkipDashboard) {
-    Write-Host "[WARN] npm not found - dashboard build will be skipped." -ForegroundColor Yellow
-    $SkipDashboard = $true
+    Write-Host "  npm not found - installing Node.js LTS via winget..."
+    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] Node.js install failed" -ForegroundColor Red; exit 1 }
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    if (-not (Get-Command "npm" -ErrorAction SilentlyContinue)) {
+        Write-Host "[WARN] npm still not found after install - restart PowerShell and re-run." -ForegroundColor Yellow
+        $SkipDashboard = $true
+    }
 }
 
 # --- clone ---
