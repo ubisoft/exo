@@ -69,26 +69,42 @@ Write-Step "Checking prerequisites"
 Assert-Command "git" "Install Git: winget install Git.Git"
 
 # Check for MSVC link.exe (required to compile Rust pyo3 bindings)
-$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$linkFound = $false
-if (Test-Path $vsWhere) {
+$vsWhere  = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vsSetup  = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+$linkFound = [bool](Get-Command "link.exe" -ErrorAction SilentlyContinue)
+
+if (-not $linkFound -and (Test-Path $vsWhere)) {
     $vsPath = & $vsWhere -latest -products * -requires Microsoft.VisualCpp.Tools.HostX64.TargetX64 -property installationPath 2>$null
     if ($vsPath) { $linkFound = $true }
 }
+
 if (-not $linkFound) {
-    $linkFound = [bool](Get-Command "link.exe" -ErrorAction SilentlyContinue)
-}
-if (-not $linkFound) {
-    Write-Host "  MSVC Build Tools not found - installing via winget (this may take several minutes)..."
-    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements `
-        --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] Build Tools install failed. Install manually:" -ForegroundColor Red
-        Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools" -ForegroundColor Red
-        Write-Host "  Then select 'Desktop development with C++' workload." -ForegroundColor Red
-        exit 1
+    $vsInstallPath = $null
+    if (Test-Path $vsWhere) {
+        $vsInstallPath = & $vsWhere -latest -products * -property installationPath 2>$null
     }
-    Write-Host "  Build Tools installed. You may need to restart PowerShell before running uv sync." -ForegroundColor Yellow
+
+    if ($vsInstallPath -and (Test-Path $vsSetup)) {
+        # VS/Build Tools already installed — add the C++ workload to existing installation
+        Write-Host "  Build Tools found but missing C++ workload — adding it (this may take a few minutes)..."
+        & $vsSetup modify --installPath $vsInstallPath --quiet `
+            --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended
+        Write-Host "  C++ workload added. Restart PowerShell then re-run this script." -ForegroundColor Yellow
+        exit 0
+    } else {
+        # No VS at all — fresh install
+        Write-Host "  MSVC Build Tools not found - installing via winget (this may take several minutes)..."
+        winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements `
+            --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERROR] Build Tools install failed. Install manually:" -ForegroundColor Red
+            Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools" -ForegroundColor Red
+            Write-Host "  Then select 'Desktop development with C++' workload." -ForegroundColor Red
+            exit 1
+        }
+    }
+    Write-Host "  Build Tools installed. Restart PowerShell then re-run this script." -ForegroundColor Yellow
+    exit 0
 }
 
 if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
