@@ -68,6 +68,29 @@ Write-Step "Checking prerequisites"
 
 Assert-Command "git" "Install Git: winget install Git.Git"
 
+# Check for MSVC link.exe (required to compile Rust pyo3 bindings)
+$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$linkFound = $false
+if (Test-Path $vsWhere) {
+    $vsPath = & $vsWhere -latest -products * -requires Microsoft.VisualCpp.Tools.HostX64.TargetX64 -property installationPath 2>$null
+    if ($vsPath) { $linkFound = $true }
+}
+if (-not $linkFound) {
+    $linkFound = [bool](Get-Command "link.exe" -ErrorAction SilentlyContinue)
+}
+if (-not $linkFound) {
+    Write-Host "  MSVC Build Tools not found - installing via winget (this may take several minutes)..."
+    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements `
+        --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Build Tools install failed. Install manually:" -ForegroundColor Red
+        Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools" -ForegroundColor Red
+        Write-Host "  Then select 'Desktop development with C++' workload." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  Build Tools installed. You may need to restart PowerShell before running uv sync." -ForegroundColor Yellow
+}
+
 if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "  uv not found - installing via winget..."
     winget install --id astral-sh.uv -e --accept-source-agreements --accept-package-agreements
