@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs exo worker node on a second Windows host.
 
@@ -27,30 +27,32 @@
 
 .EXAMPLE
     .\install-worker.ps1
-    .\install-worker.ps1 -InstallDir D:\exo -NoApi -CudaVersion cu12.2
+    .\install-worker.ps1 -InstallDir D:\exo -NoApi -CudaVersion 12.2
 #>
 param(
     [string]$InstallDir   = "C:\exo",
     [switch]$NoApi,
     [switch]$SkipDashboard,
-    [string]$CudaVersion  = "cu12.4"
+    [string]$CudaVersion  = "12.4"
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# Do NOT set ErrorActionPreference=Stop globally — PS 5.1 treats any native
+# command stderr as a terminating error. Check $LASTEXITCODE after key steps.
 
 $LlamaBuild   = "b7836"
 $LlamaZip     = "llama-$LlamaBuild-bin-win-cuda-$CudaVersion-x64.zip"
+# Also need the cudart runtime package alongside the main zip
+$CudartZip    = "cudart-llama-bin-win-cuda-$CudaVersion-x64.zip"
 $LlamaUrl     = "https://github.com/ggerganov/llama.cpp/releases/download/$LlamaBuild/$LlamaZip"
 $RepoUrl      = "git@github.com:ubisoft/exo.git"
 $Branch       = "supportWindows"
 $LibP2PPort   = 4001
 $ApiPort      = 52415
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
 function Write-Step([string]$msg) {
-    Write-Host "`n==> $msg" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "==> $msg" -ForegroundColor Cyan
 }
 
 function Assert-Command([string]$cmd, [string]$install) {
@@ -60,72 +62,84 @@ function Assert-Command([string]$cmd, [string]$install) {
     }
 }
 
-# ── prerequisite checks ───────────────────────────────────────────────────────
+# --- prerequisite checks ---
 
 Write-Step "Checking prerequisites"
 
-Assert-Command "git"    "Install Git from https://git-scm.com"
-Assert-Command "uv"     "Install uv: irm https://astral.sh/uv/install.ps1 | iex"
-Assert-Command "python" "Install Python 3.10 from https://python.org"
+Assert-Command "git" "Install Git from https://git-scm.com"
+Assert-Command "uv"  "Install uv: irm https://astral.sh/uv/install.ps1 | iex"
 
-$pyVer = python --version 2>&1
+$pyVer = uv python find 2>&1
 Write-Host "  Python : $pyVer"
 Write-Host "  uv     : $(uv --version)"
 Write-Host "  git    : $(git --version)"
 
 if (-not (Get-Command "npm" -ErrorAction SilentlyContinue) -and -not $SkipDashboard) {
-    Write-Host "[WARN] npm not found — dashboard build will be skipped." -ForegroundColor Yellow
+    Write-Host "[WARN] npm not found - dashboard build will be skipped." -ForegroundColor Yellow
     $SkipDashboard = $true
 }
 
-# ── clone ─────────────────────────────────────────────────────────────────────
+# --- clone ---
 
 Write-Step "Cloning repository into $InstallDir"
 
 if (Test-Path "$InstallDir\.git") {
-    Write-Host "  Directory exists — pulling latest changes"
+    Write-Host "  Directory exists - pulling latest changes"
     git -C $InstallDir fetch origin
     git -C $InstallDir checkout $Branch
     git -C $InstallDir pull origin $Branch
 } else {
     git clone --branch $Branch $RepoUrl $InstallDir
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] git clone failed" -ForegroundColor Red; exit 1 }
 }
 
 Set-Location $InstallDir
 
-# ── python deps ───────────────────────────────────────────────────────────────
+# --- python deps ---
 
 Write-Step "Installing Python dependencies"
 $env:UV_SKIP_WHEEL_FILENAME_CHECK = "1"
 uv sync
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] uv sync failed" -ForegroundColor Red; exit 1 }
 
-# ── dashboard ─────────────────────────────────────────────────────────────────
+# --- dashboard ---
 
 if (-not $SkipDashboard) {
     Write-Step "Building dashboard"
     Push-Location "$InstallDir\dashboard"
     npm install
     npm run build
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] dashboard build failed" -ForegroundColor Red; exit 1 }
     Pop-Location
 }
 
-# ── llama.cpp binaries ────────────────────────────────────────────────────────
+# --- llama.cpp binaries ---
 
 Write-Step "Downloading llama.cpp $LlamaBuild ($CudaVersion)"
 
-$tmpZip = "$env:TEMP\$LlamaZip"
-$tmpDir = "$env:TEMP\llama-extract"
+$tmpZip     = "$env:TEMP\$LlamaZip"
+$tmpCudart  = "$env:TEMP\$CudartZip"
+$tmpDir     = "$env:TEMP\llama-extract"
 
 if (-not (Test-Path $tmpZip)) {
-    Write-Host "  Downloading $LlamaUrl"
+    Write-Host "  Downloading $LlamaZip"
     Invoke-WebRequest -Uri $LlamaUrl -OutFile $tmpZip -UseBasicParsing
 } else {
-    Write-Host "  Archive already cached at $tmpZip"
+    Write-Host "  Main archive already cached"
+}
+
+$CudartUrl = "https://github.com/ggerganov/llama.cpp/releases/download/$LlamaBuild/$CudartZip"
+if (-not (Test-Path $tmpCudart)) {
+    Write-Host "  Downloading $CudartZip"
+    Invoke-WebRequest -Uri $CudartUrl -OutFile $tmpCudart -UseBasicParsing
+} else {
+    Write-Host "  Cudart archive already cached"
 }
 
 Write-Host "  Extracting..."
 if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
-Expand-Archive -Path $tmpZip -DestinationPath $tmpDir
+Expand-Archive -Path $tmpZip    -DestinationPath $tmpDir
+Expand-Archive -Path $tmpCudart -DestinationPath $tmpDir -Force
 
 $needed = @(
     "llama-server.exe",
@@ -148,13 +162,13 @@ foreach ($dll in $cpuDlls) {
     Write-Host "  Copied $($dll.Name)"
 }
 
-# ── startup script ────────────────────────────────────────────────────────────
+# --- startup script ---
 
 Write-Step "Writing startup script"
 
 $exoArgs = if ($NoApi) { "--no-api" } else { "" }
 $startScript = @"
-# exo worker startup script — generated by install-worker.ps1
+# exo worker startup script - generated by install-worker.ps1
 Set-Location "$InstallDir"
 
 `$env:UV_SKIP_WHEEL_FILENAME_CHECK = "1"
@@ -169,21 +183,16 @@ $startPath = "$InstallDir\start-exo.ps1"
 Set-Content -Path $startPath -Value $startScript.Trim() -Encoding UTF8
 Write-Host "  Written to $startPath"
 
-# ── done ─────────────────────────────────────────────────────────────────────
+# --- done ---
 
-Write-Host @"
-
-==========================================================
-  Installation complete!
-
-  Next step — open firewall ports (requires Admin):
-    Right-click configure-firewall.ps1 > Run as Administrator
-    (script is at $InstallDir\scripts\configure-firewall.ps1)
-
-  Then start exo:
-    powershell -ExecutionPolicy Bypass -File "$startPath"
-
-  Cluster will form automatically via mDNS once both
-  nodes are running on the same LAN.
-==========================================================
-"@ -ForegroundColor Green
+Write-Host ""
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host "  Installation complete!" -ForegroundColor Green
+Write-Host "" -ForegroundColor Green
+Write-Host "  Next step - open firewall ports (requires Admin):" -ForegroundColor Green
+Write-Host "    Right-click configure-firewall.ps1 > Run as Administrator" -ForegroundColor Green
+Write-Host "    (script is at $InstallDir\scripts\configure-firewall.ps1)" -ForegroundColor Green
+Write-Host "" -ForegroundColor Green
+Write-Host "  Then start exo:" -ForegroundColor Green
+Write-Host "    powershell -ExecutionPolicy Bypass -File `"$startPath`"" -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
