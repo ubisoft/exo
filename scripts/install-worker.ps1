@@ -31,7 +31,7 @@
 #>
 param(
     [string]$InstallDir   = "C:\exo",
-    [switch]$NoApi,
+    [switch]$NoApi = $true,
     [switch]$SkipDashboard,
     [string]$CudaVersion  = "12.4"
 )
@@ -228,6 +228,8 @@ Set-Location "$InstallDir"
 `$env:EXO_LLAMA_SERVER_PATH        = "$InstallDir\llama-server.exe"
 `$env:EXO_LIBP2P_LISTEN_PORT       = "$LibP2PPort"
 `$env:EXO_LIBP2P_LISTEN_ADDR       = "0.0.0.0"
+# Set this to the master's IP:port if mDNS doesn't work (different subnets)
+# `$env:EXO_LIBP2P_BOOTSTRAP_PEERS  = "MASTER_IP:4001"
 
 uv run exo $exoArgs
 "@

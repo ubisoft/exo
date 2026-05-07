@@ -43,6 +43,27 @@ pub fn create_swarm(keypair: identity::Keypair) -> alias::AnyResult<Swarm> {
 
     // Listen on configured interface and port (or any port if 0)
     swarm.listen_on(listen_addr.parse()?)?;
+
+    // Dial bootstrap peers if configured: EXO_LIBP2P_BOOTSTRAP_PEERS=ip:port,ip:port
+    if let Ok(peers) = env::var("EXO_LIBP2P_BOOTSTRAP_PEERS") {
+        for peer in peers.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let multiaddr = if peer.starts_with('/') {
+                peer.to_string()
+            } else {
+                // Accept plain ip:port shorthand
+                let mut parts = peer.rsplitn(2, ':');
+                let port = parts.next().unwrap_or("4001");
+                let ip   = parts.next().unwrap_or(peer);
+                if ip.contains(':') {
+                    format!("/ip6/{ip}/tcp/{port}")
+                } else {
+                    format!("/ip4/{ip}/tcp/{port}")
+                }
+            };
+            swarm.dial(multiaddr.parse::<libp2p::Multiaddr>()?)?;
+        }
+    }
+
     Ok(swarm)
 }
 
